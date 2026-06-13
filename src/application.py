@@ -1,7 +1,8 @@
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, tzinfo
+from datetime import timezone as datetime_timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -203,12 +204,7 @@ class Application:
 		if need_notify and account_results:
 			# 获取时区配置（处理空字符串的情况）
 			timezone_name = os.getenv('TZ') or self.DEFAULT_TIMEZONE
-			try:
-				timezone = ZoneInfo(timezone_name)
-			except Exception:
-				# 如果时区无效，使用默认时区
-				logger.warning(f'时区 {timezone_name} 无效，使用默认时区 {self.DEFAULT_TIMEZONE}')
-				timezone = ZoneInfo(self.DEFAULT_TIMEZONE)
+			timezone = self._get_timezone(timezone_name)
 
 			# 获取时间戳格式配置（处理空字符串的情况）
 			timestamp_format = os.getenv('TIMESTAMP_FORMAT') or self.DEFAULT_TIMESTAMP_FORMAT
@@ -305,6 +301,30 @@ class Application:
 		accounts = self._filter_valid_accounts(accounts)
 
 		return accounts
+
+	def _get_timezone(self, timezone_name: str) -> tzinfo:
+		"""
+		获取可用的时区对象
+
+		Args:
+		    timezone_name: 用户配置的时区名称
+
+		Returns:
+		    tzinfo: 可用于生成通知时间戳的时区对象
+		"""
+		timezone_candidates = [timezone_name]
+		if timezone_name != self.DEFAULT_TIMEZONE:
+			timezone_candidates.append(self.DEFAULT_TIMEZONE)
+
+		for candidate in timezone_candidates:
+			try:
+				return ZoneInfo(candidate)
+			except Exception:
+				# Windows 等环境可能缺少系统时区数据库，需要继续尝试兜底方案。
+				logger.warning(f'时区 {candidate} 无效，继续尝试备用时区')
+
+		logger.warning('默认时区不可用，使用 UTC')
+		return datetime_timezone.utc
 
 	def _apply_prefix_overrides(
 		self,

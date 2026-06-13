@@ -12,7 +12,8 @@ dependencies = [
   "json5==0.10.0",
   "playwright==1.55.0",
   "python-dotenv==1.1.1",
-  "stencil-template==4.1.1"
+  "stencil-template==4.1.1",
+  "tzdata==2025.2"
 ]
 
 [project.scripts]

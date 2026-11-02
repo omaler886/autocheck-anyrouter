@@ -1,0 +1,72 @@
+name: cookie-check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: 解析账号 cookie 过期时间
+        env:
+          ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
+        run: |
+          python3 - <<'PY'
+          import os, json, base64, datetime
+
+          raw = os.environ.get('ACCOUNTS', '')
+          print('accounts_env_len=', len(raw))
+          try:
+              data = json.loads(raw)
+          except Exception as e:
+              print('JSON_PARSE_ERROR:', e)
+              raise SystemExit(1)
+
+          if isinstance(data, dict):
+              data = [data]
+          print('account_count=', len(data))
+
+          def parse_cookie_str(s):
+              d = {}
+              for part in s.split(';'):
+                  if '=' in part:
+                      k, v = part.strip().split('=', 1)
+                      d[k] = v
+              return d
+
+          def jwt_exp(v):
+              parts = v.split('.')
+              if len(parts) != 3:
+                  return None
+              p = parts[1]
+              p += '=' * (-len(p) % 4)
+              return json.loads(base64.urlsafe_b64decode(p))
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          for i, acc in enumerate(data):
+              name = acc.get('name') or acc.get('api_user') or f'account{i+1}'
+              cookies = acc.get('cookies')
+              if isinstance(cookies, str):
+                  cookies = parse_cookie_str(cookies)
+              if not isinstance(cookies, dict):
+                  print(f'[{name}] cookies_type={type(cookies).__name__}')
+                  continue
+              print(f'[{name}] cookie_names={sorted(cookies.keys())}')
+              for k, v in cookies.items():
+                  info = {'len': len(v)}
+                  p = jwt_exp(v)
+                  if p:
+                      exp = p.get('exp')
+                      iat = p.get('iat')
+                      if exp:
+                          exp_dt = datetime.datetime.fromtimestamp(exp, datetime.timezone.utc)
+                          left = exp_dt - now
+                          info['exp'] = exp_dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+                          info['left_hours'] = round(left.total_seconds() / 3600, 2)
+                      if iat:
+                          info['iat'] = datetime.datetime.fromtimestamp(iat, datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+                      info['claims'] = sorted(p.keys())
+                  print(f'  - {k}: {info}')
+          PY

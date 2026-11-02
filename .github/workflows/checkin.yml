@@ -1,13 +1,29 @@
 name: AnyRouter 自动签到
+
+# 纯 GitHub Actions 定时签到
+# 关键点：
+#  1. cron 全部错开整点（GitHub 整点调度高峰最容易丢 run）
+#  2. concurrency 防止重叠执行
+#  3. 每次成功后在仓库留下提交（keepalive），避免仓库长期无活动导致 schedule 被限制
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '17 0 * * *'    # 北京 08:17
+    - cron: '23 4 * * *'    # 北京 12:23
+    - cron: '47 12 * * *'   # 北京 20:47
   workflow_dispatch:
+
+concurrency:
+  group: autocheck-anyrouter
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 20
     env:
       PYTHONIOENCODING: utf-8
       # 仓库可见性，用于隐私控制
@@ -60,3 +76,25 @@ jobs:
 
       - name: 🚀 执行签到任务
         run: mise run checkin
+
+      # 让仓库保持“有活动”，防止长期只有 schedule 读取、没有提交，
+      # 被 GitHub 判定为不活跃仓库而把 scheduled workflow 打入 action_required。
+      - name: 🫀 保活提交（每天最多一次）
+        if: always()
+        run: |
+          set -e
+          today=$(date -u +%F)
+          if [ -f .last-checkin ] && grep -q "$today" .last-checkin; then
+            echo "今天已经提交过心跳，跳过"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '%s\n' "$today $(date -u +%H:%M:%SZ)" > .last-checkin
+          git add .last-checkin
+          if git diff --cached --quiet; then
+            echo "无变化，跳过提交"
+          else
+            git commit -m "chore: checkin heartbeat $(date -u +%F)"
+            git push
+          fi

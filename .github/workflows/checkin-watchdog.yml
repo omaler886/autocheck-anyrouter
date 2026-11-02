@@ -1,0 +1,51 @@
+name: 签到看门狗
+
+# 纯 GitHub Actions 兜底：
+#   每 6 小时检查一次当天（Asia/Shanghai）是否已有成功签到，
+#   若 08:00 之后仍没有，则用内置 GITHUB_TOKEN 触发 checkin.yml。
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: checkin-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 🔍 检查当天签到状态并在需要时补跑
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          today=$(TZ=Asia/Shanghai date +%F)
+          hour=$(TZ=Asia/Shanghai date +%H)
+          echo "today(Asia/Shanghai)=$today hour=$hour"
+
+          ok=$(gh run list --repo "$REPO" --workflow checkin.yml --limit 100 \
+                --json conclusion,createdAt \
+                --jq "[.[] | select(.conclusion==\"success\") | select((.createdAt|fromdateiso8601|.+28800|strftime(\"%Y-%m-%d\"))==\"$today\")] | length")
+          echo "today_success_runs=$ok"
+
+          if [ "$ok" -gt 0 ]; then
+            echo "今天已有成功签到，跳过。"
+            exit 0
+          fi
+
+          if [ "$hour" -lt 8 ]; then
+            echo "未到 08:00（Asia/Shanghai），跳过补跑。"
+            exit 0
+          fi
+
+          echo "今天还没有成功记录，触发签到 workflow……"
+          gh workflow run checkin.yml --repo "$REPO" --ref main
+          echo "已触发。"
